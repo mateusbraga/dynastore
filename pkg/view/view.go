@@ -123,6 +123,17 @@ func (v *View) GetUpdates() []Update {
 	return updates
 }
 
+func (v *View) GetUpdatesNotIn(v2 *View) []Update {
+	var updates []Update
+	for loopUpdate, _ := range v.Entries {
+		if !v2.Entries[loopUpdate] {
+			updates = append(updates, loopUpdate)
+		}
+	}
+
+	return updates
+}
+
 func (v *View) GetMembers() []Process {
 	var members []Process
 	for process, _ := range v.Members {

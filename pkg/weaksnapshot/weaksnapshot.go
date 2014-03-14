@@ -17,12 +17,13 @@ type weakSnapshot struct {
 	associatedView    *view.View
 	associatedProcess view.Process
 	registers         []register
+	registersMu       sync.RWMutex
 }
 
-func (ws *weakSnapshot) collect() []interface{} {
-	var result []interface{}
+func (ws *weakSnapshot) collect() [][]view.Update {
+	var result [][]view.Update
 
-	registerValueChan := make(chan interface{}, 20)
+	registerValueChan := make(chan []view.Update, 20)
 	for registerIndex := 0; registerIndex < ws.associatedView.NumberOfMembers(); registerIndex++ {
 		go ws.readQuorum(registerIndex, registerValueChan)
 	}
@@ -38,21 +39,20 @@ func (ws *weakSnapshot) collect() []interface{} {
 		}
 	}
 
-	if len(result) == 0 {
-		return nil
-	} else {
-		return result
-	}
+	return result
 }
 
-func (ws *weakSnapshot) write(registerIndex int, change interface{}) {
-	ws.registers[registerIndex].value = change
-	ts := ws.registers[registerIndex].timestamp
-	ts++
-	ws.registers[registerIndex].timestamp = ts
+func (ws *weakSnapshot) write(registerIndex int, change []view.Update) {
+	ws.registersMu.Lock()
+	defer ws.registersMu.Unlock()
+
+	register := ws.registers[registerIndex]
+	register.value = change
+	register.timestamp++
+	ws.registers[registerIndex] = register
 }
 
-func (ws *weakSnapshot) readQuorum(registerIndex int, returnChan chan<- interface{}) {
+func (ws *weakSnapshot) readQuorum(registerIndex int, returnChan chan<- []view.Update) {
 	readMsg := registerMsg{}
 	readMsg.RegisterIndex = registerIndex
 	readMsg.View = ws.associatedView
@@ -75,28 +75,28 @@ func (ws *weakSnapshot) readQuorum(registerIndex int, returnChan chan<- interfac
 				log.Fatalln("weaksnapshot: Failed to get read quorum")
 			}
 		} else {
-			returnChan <- receivedValue
+			returnChan <- receivedValue.Value
 			successTotal++
 		}
 	}
 }
 
-func Scan(associatedView *view.View, thisProcess view.Process) []interface{} {
+func Scan(associatedView *view.View, thisProcess view.Process) [][]view.Update {
 	ws := getOrCreateWeakSnapshot(associatedView, thisProcess)
 
 	result := ws.collect()
-	if result == nil {
-		return nil
+	if len(result) == 0 {
+		return result
 	}
 
 	return ws.collect()
 }
 
-func Update(associatedView *view.View, thisProcess view.Process, change interface{}) {
+func Update(associatedView *view.View, thisProcess view.Process, change []view.Update) {
 	ws := getOrCreateWeakSnapshot(associatedView, thisProcess)
 
 	result := ws.collect()
-	if result == nil {
+	if len(result) == 0 {
 		registerIndex := associatedView.GetProcessPosition(thisProcess)
 		ws.write(registerIndex, change)
 	}
@@ -123,12 +123,12 @@ func getOrCreateWeakSnapshot(associatedView *view.View, thisProcess view.Process
 }
 
 type register struct {
-	value     interface{}
+	value     []view.Update
 	timestamp int
 }
 
 type registerMsg struct {
-	Value         interface{}
+	Value         []view.Update
 	RegisterIndex int
 	View          *view.View
 	Process       view.Process
@@ -154,10 +154,13 @@ func broadcastRead(destinationView *view.View, msg registerMsg, resultChan chan 
 
 type WeakSnapshotService struct{}
 
-func init() { rpc.Register(WeakSnapshotService{}) }
+func init() { rpc.Register(new(WeakSnapshotService)) }
 
 func (wss *WeakSnapshotService) Read(readMsg registerMsg, resultMsg *registerMsg) error {
 	ws := getOrCreateWeakSnapshot(readMsg.View, readMsg.Process)
+
+	ws.registersMu.RLock()
+	defer ws.registersMu.RUnlock()
 
 	resultMsg.Value = ws.registers[readMsg.RegisterIndex].value
 	return nil
