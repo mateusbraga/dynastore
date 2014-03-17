@@ -23,7 +23,7 @@ type weakSnapshot struct {
 func (ws *weakSnapshot) collect() [][]view.Update {
 	var result [][]view.Update
 
-	registerValueChan := make(chan []view.Update, 20)
+	registerValueChan := make(chan []view.Update, ws.associatedView.NumberOfMembers())
 	for registerIndex := 0; registerIndex < ws.associatedView.NumberOfMembers(); registerIndex++ {
 		go ws.readQuorum(registerIndex, registerValueChan)
 	}
@@ -50,15 +50,16 @@ func (ws *weakSnapshot) write(registerIndex int, change []view.Update) {
 	register.value = change
 	register.timestamp++
 	ws.registers[registerIndex] = register
+	log.Println("new register:", ws.registers[registerIndex])
 }
 
-func (ws *weakSnapshot) readQuorum(registerIndex int, returnChan chan<- []view.Update) {
-	readMsg := registerMsg{}
+func (ws *weakSnapshot) readQuorum(registerIndex int, finalQuorumResultChan chan<- []view.Update) {
+	readMsg := RegisterMsg{}
 	readMsg.RegisterIndex = registerIndex
 	readMsg.View = ws.associatedView
 
 	// Send write request to all
-	resultChan := make(chan registerMsg, ws.associatedView.NumberOfMembers())
+	resultChan := make(chan RegisterMsg, ws.associatedView.NumberOfMembers())
 	go broadcastRead(ws.associatedView, readMsg, resultChan)
 
 	// Wait for quorum
@@ -75,8 +76,11 @@ func (ws *weakSnapshot) readQuorum(registerIndex int, returnChan chan<- []view.U
 				log.Fatalln("weaksnapshot: Failed to get read quorum")
 			}
 		} else {
-			returnChan <- receivedValue.Value
 			successTotal++
+			if successTotal == ws.associatedView.QuorumSize() {
+				finalQuorumResultChan <- receivedValue.Value
+				return
+			}
 		}
 	}
 }
@@ -127,7 +131,7 @@ type register struct {
 	timestamp int
 }
 
-type registerMsg struct {
+type RegisterMsg struct {
 	Value         []view.Update
 	RegisterIndex int
 	View          *view.View
@@ -135,18 +139,18 @@ type registerMsg struct {
 	Err           error
 }
 
-func sendRead(process view.Process, msg registerMsg, resultChan chan registerMsg) {
-	var result registerMsg
+func sendRead(process view.Process, msg RegisterMsg, resultChan chan RegisterMsg) {
+	var result RegisterMsg
 	err := comm.SendRPCRequest(process, "WeakSnapshotService.ReadRegister", msg, &result)
 	if err != nil {
-		resultChan <- registerMsg{Err: err}
+		resultChan <- RegisterMsg{Err: err}
 		return
 	}
 
 	resultChan <- result
 }
 
-func broadcastRead(destinationView *view.View, msg registerMsg, resultChan chan registerMsg) {
+func broadcastRead(destinationView *view.View, msg RegisterMsg, resultChan chan RegisterMsg) {
 	for _, process := range destinationView.GetMembers() {
 		go sendRead(process, msg, resultChan)
 	}
@@ -156,12 +160,12 @@ type WeakSnapshotService struct{}
 
 func init() { rpc.Register(new(WeakSnapshotService)) }
 
-func (wss *WeakSnapshotService) Read(readMsg registerMsg, resultMsg *registerMsg) error {
+func (wss *WeakSnapshotService) ReadRegister(readMsg RegisterMsg, resultMsg *RegisterMsg) error {
 	ws := getOrCreateWeakSnapshot(readMsg.View, readMsg.Process)
 
 	ws.registersMu.RLock()
-	defer ws.registersMu.RUnlock()
-
 	resultMsg.Value = ws.registers[readMsg.RegisterIndex].value
+	ws.registersMu.RUnlock()
+
 	return nil
 }

@@ -41,6 +41,7 @@ func Run(bindAddr string, initialView *view.View) {
 			register.mu.Unlock() // Enable r/w operations
 		} else {
 			// join the view
+			log.Println("asking to join view")
 			Join()
 		}
 	}

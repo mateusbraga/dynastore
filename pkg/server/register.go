@@ -1,4 +1,3 @@
-//TODO make it a key value storage
 package server
 
 import (
@@ -17,52 +16,77 @@ import (
 )
 
 var register Value
-var maxRegister Value
-var pickNewTimestamp bool
+
+func init() { register.mu.Lock() }
 
 //  ---------- RPC Requests -------------
 type RegisterService int
 
 func init() { rpc.Register(new(RegisterService)) }
 
-func (r *RegisterService) Read(clientViewRef view.ViewRef, reply *Value) error {
-	register.mu.Lock()
-	defer register.mu.Unlock()
+func (r *RegisterService) GetCurrentView(value int, reply *view.View) error {
+	*reply = *currentView.View()
+	log.Println("Done GetCurrentView request")
+	return nil
+}
 
-	pickNewTimestamp = false
-	newView := traverse(nil, Value{})
+func (r *RegisterService) Read(arg struct{}, reply *Value) error {
+	var thisOpValue Value
+	pickNewTimestamp := false
+	newView := traverse(&thisOpValue, nil, nil, &pickNewTimestamp)
 	if newView != nil {
 		notifyQ(newView)
 	}
 
-	reply.Value = maxRegister.Value
-	reply.Timestamp = maxRegister.Timestamp
-
-	throughput++
+	reply.Value = thisOpValue.Value
+	reply.Timestamp = thisOpValue.Timestamp
 
 	return nil
 }
 
-func (r *RegisterService) Write(value Value, reply *Value) error {
-	register.mu.Lock()
-	defer register.mu.Unlock()
-
-	pickNewTimestamp = true
-	newView := traverse(nil, value)
+func (r *RegisterService) Write(value Value, reply *struct{}) error {
+	var thisOpValue Value
+	pickNewTimestamp := true
+	newView := traverse(&thisOpValue, nil, value.Value, &pickNewTimestamp)
 	if newView != nil {
 		notifyQ(newView)
 	}
 
-	throughput++
-
 	return nil
+}
+
+// ----- reconfig
+
+func (r *RegisterService) Reconfig(updates []view.Update, reply *struct{}) error {
+	var thisOpValue Value
+	pickNewTimestamp := false
+	newView := traverse(&thisOpValue, updates, nil, &pickNewTimestamp)
+	if newView != nil {
+		notifyQ(newView)
+	}
+	return nil
+}
+
+func Join() {
+	comm.BroadcastRPCRequest(currentView.View(), "RegisterService.Reconfig", []view.Update{view.Update{view.Join, thisProcess}})
+}
+
+func Leave() {
+	comm.BroadcastRPCRequest(currentView.View(), "RegisterService.Reconfig", []view.Update{view.Update{view.Leave, thisProcess}})
 }
 
 // ----- Traverse
 
-func traverse(changes []view.Update, value Value) *view.View {
-	desiredView := view.NewWithUpdates(append(currentView.View().GetUpdates(), changes...)...)
-	front := ViewSeq{currentView.View()}
+func traverse(thisOpValue *Value, changes []view.Update, value interface{}, pickNewTimestamp *bool) *view.View {
+	initialCurrentView := currentView.View()
+
+	var desiredView *view.View
+	if changes != nil {
+		desiredView = view.NewWithUpdates(append(initialCurrentView.GetUpdates(), changes...)...)
+	} else {
+		desiredView = initialCurrentView
+	}
+	front := ViewSeq{initialCurrentView}
 
 	var changeSets [][]view.Update
 	for {
@@ -73,11 +97,13 @@ func traverse(changes []view.Update, value Value) *view.View {
 		}
 
 		if !leastUpdatedView.Equal(desiredView) {
+			log.Println("desired != leastUpdatedView")
 			weaksnapshot.Update(leastUpdatedView, thisProcess, desiredView.GetUpdatesNotIn(leastUpdatedView))
 		}
 
-		changeSets = readInView(leastUpdatedView)
+		changeSets = readInView(leastUpdatedView, thisOpValue)
 		if len(changeSets) != 0 {
+			log.Println("changeSets != 0")
 			front = front.Delete(leastUpdatedView)
 			allUpdates := []view.Update{}
 			for _, updates := range changeSets {
@@ -86,38 +112,51 @@ func traverse(changes []view.Update, value Value) *view.View {
 			}
 			desiredView = desiredView.NewCopyWithUpdates(allUpdates...)
 		} else {
-			changeSets = writeInView(leastUpdatedView, value)
+			//log.Println("changeSets == 0")
+			changeSets = writeInView(leastUpdatedView, value, thisOpValue, pickNewTimestamp)
 		}
 
 		if len(changeSets) == 0 {
+			//log.Println("changeSets == 0")
 			break
 		}
 	}
-	currentView.Update(desiredView)
-	return desiredView
-}
 
-func readInView(destinationView *view.View) [][]view.Update {
-	changeSets := weaksnapshot.Scan(destinationView, thisProcess)
-	contactQ("R", destinationView)
-	return changeSets
-}
-
-func writeInView(destinationView *view.View, value Value) [][]view.Update {
-	if pickNewTimestamp {
-		pickNewTimestamp = false
-		maxRegister.Value = value.Value
-		//TODO append process id
-		maxRegister.Timestamp++
+	if !initialCurrentView.Equal(currentView.View()) {
+		// restart, we got a notify request that changed the current view
+		return traverse(thisOpValue, changes, value, pickNewTimestamp)
 	}
-	contactQ("W", destinationView)
+
+	if currentView.View().LessUpdatedThan(desiredView) {
+		log.Println("installing desired view")
+		currentView.Update(desiredView)
+		return desiredView
+	} else {
+		return nil
+	}
+}
+
+func readInView(destinationView *view.View, thisOpValue *Value) [][]view.Update {
+	changeSets := weaksnapshot.Scan(destinationView, thisProcess)
+	contactQ("R", destinationView, thisOpValue)
+	return changeSets
+}
+
+func writeInView(destinationView *view.View, value interface{}, thisOpValue *Value, pickNewTimestamp *bool) [][]view.Update {
+	if *pickNewTimestamp {
+		*pickNewTimestamp = false
+		thisOpValue.Value = value
+		//TODO append process id
+		thisOpValue.Timestamp++
+	}
+	contactQ("W", destinationView, thisOpValue)
 	changeSets := weaksnapshot.Scan(destinationView, thisProcess)
 	return changeSets
 }
 
-func contactQ(msgType string, destinationView *view.View) {
+func contactQ(msgType string, destinationView *view.View, thisOpValue *Value) {
 	if msgType == "W" {
-		err := comm.BroadcastRPCRequest(destinationView, "ContactQService.Write", Value{Value: maxRegister.Value, Timestamp: maxRegister.Timestamp})
+		err := comm.BroadcastRPCRequest(destinationView, "ContactQService.Write", *thisOpValue)
 		if err != nil {
 			log.Fatalln("Failed to get ContactQService.Write quorum")
 		}
@@ -145,9 +184,9 @@ func contactQ(msgType string, destinationView *view.View) {
 			}
 
 			if successTotal == destinationView.QuorumSize() {
-				if mostRecentValue.Timestamp > maxRegister.Timestamp {
-					maxRegister.Timestamp = mostRecentValue.Timestamp
-					maxRegister.Value = mostRecentValue.Value
+				if mostRecentValue.Timestamp > thisOpValue.Timestamp {
+					thisOpValue.Timestamp = mostRecentValue.Timestamp
+					thisOpValue.Value = mostRecentValue.Value
 				}
 				return
 			}
@@ -171,12 +210,23 @@ type ContactQService struct{}
 func init() { rpc.Register(new(ContactQService)) }
 
 func (nq *ContactQService) Read(arg struct{}, reply *Value) error {
+	//log.Println("ContactQService.Read")
+
+	register.mu.RLock()
+	defer register.mu.RUnlock()
+
+	throughput++
 	reply.Value = register.Value
 	reply.Timestamp = register.Timestamp
 	return nil
 }
 
 func (nq *ContactQService) Write(value Value, reply *struct{}) error {
+	//log.Println("ContactQService.Write")
+
+	register.mu.Lock()
+	defer register.mu.Unlock()
+
 	if value.Timestamp > register.Timestamp {
 		register.Timestamp = value.Timestamp
 		register.Value = value.Value
@@ -186,40 +236,62 @@ func (nq *ContactQService) Write(value Value, reply *struct{}) error {
 
 // ----- NotifyQ
 
-func notifyQ(newView *view.View) {
-	receivedViewListMu.Lock()
-	defer receivedViewListMu.Unlock()
+var notifyViewCounterList []viewCounterInstance
+var notifyViewCounterListMu sync.Mutex
 
-	i, viewCounter := findNotifyViewCounter(NotifyMsg{View: newView, Sender: thisProcess})
+func getOrCreateNotifyViewCounter(associatedView *view.View) viewCounterInstance {
+	notifyViewCounterListMu.Lock()
+	defer notifyViewCounterListMu.Unlock()
 
-	<-viewCounter.gotQuorumC
-}
-
-type viewCounter struct {
-	view       *view.View
-	received   map[view.Process]bool
-	gotQuorumC chan struct{}
-}
-
-var receivedViewList []viewCounter
-var receivedViewListMu sync.Mutex
-
-func findNotifyViewCounter(notifyMsg NotifyMsg) (int, viewCounter) {
-	var gotQuorumC *chan struct{}
-
-	for i, loopViewCounter := range receivedViewList {
-		if loopViewCounter.view.Equal(notifyMsg.View) {
-			return i, loopViewCounter
+	for _, loopNvc := range notifyViewCounterList {
+		if loopNvc.view.Equal(associatedView) {
+			return loopNvc
 		}
 	}
 
-	// if not found, resend and create it
+	// Create new one, and send notify msgs
+	go comm.BroadcastRPCRequest(associatedView, "NotifyQService.Notify", NotifyMsg{View: associatedView, Sender: thisProcess})
 
-	comm.BroadcastRPCRequest(notifyMsg.View, "NotifyQService.Notify", notifyMsg)
+	newViewCounter := viewCounterInstance{done: make(chan struct{}), view: associatedView, gotQuorumC: make(chan struct{}), newNotifyMsgC: make(chan NotifyMsg, 20)}
+	notifyViewCounterList = append(notifyViewCounterList, newViewCounter)
 
-	newViewCounter := viewCounter{view: notifyMsg.View, received: make(map[view.Process]bool), gotQuorumC: make(chan struct{})}
-	receivedViewList = append(receivedViewList, newViewCounter)
-	return len(receivedViewList) - 1, newViewCounter
+	go notifyViewCounterWorker(newViewCounter)
+
+	if currentView.View().LessUpdatedThan(associatedView) {
+		if !currentView.View().HasMember(thisProcess) && associatedView.HasMember(thisProcess) {
+			defer func() { register.mu.Unlock() }()
+		}
+		currentView.Update(associatedView)
+	}
+
+	return newViewCounter
+}
+
+func notifyViewCounterWorker(vci viewCounterInstance) {
+	receivedMsgs := make(map[view.Process]bool, vci.view.NumberOfMembers())
+	for {
+		select {
+		case notifyMsg := <-vci.newNotifyMsgC:
+			receivedMsgs[notifyMsg.Sender] = true
+
+			if len(receivedMsgs) == vci.view.QuorumSize() || vci.view.QuorumSize() == 0 {
+				close(vci.gotQuorumC)
+			}
+		case <-vci.done:
+		}
+	}
+}
+
+func notifyQ(newView *view.View) {
+	vci := getOrCreateNotifyViewCounter(newView)
+	<-vci.gotQuorumC
+}
+
+type viewCounterInstance struct {
+	done          chan struct{}
+	view          *view.View
+	newNotifyMsgC chan NotifyMsg
+	gotQuorumC    chan struct{}
 }
 
 type NotifyQService struct{}
@@ -232,31 +304,9 @@ type NotifyMsg struct {
 }
 
 func (nq *NotifyQService) Notify(notifyMsg NotifyMsg, reply *struct{}) error {
-	receivedViewListMu.Lock()
-	defer receivedViewListMu.Unlock()
-
-	i, viewCounter := findNotifyViewCounter(notifyMsg)
-
-	viewCounter.received[notifyMsg.Sender] = true
-	receivedViewList[i] = viewCounter
-
-	if len(viewCounter.received) == viewCounter.view.QuorumSize() || viewCounter.view.QuorumSize() == 0 {
-		close(viewCounter.gotQuorumC)
-	}
+	vci := getOrCreateNotifyViewCounter(notifyMsg.View)
+	vci.newNotifyMsgC <- notifyMsg
 	return nil
-}
-
-//func (r *RegisterService) GetCurrentView(value int, reply *view.View) error {
-//*reply = *currentView.View()
-//log.Println("Done GetCurrentView request")
-//return nil
-//}
-
-// --------- Init ---------
-func init() {
-	register.mu.Lock() // The register starts locked
-	register.Value = nil
-	register.Timestamp = 0
 }
 
 // --------- Types ---------
@@ -264,10 +314,8 @@ type Value struct {
 	Value     interface{}
 	Timestamp int
 
-	ViewRef view.ViewRef
-	Err     error
-
-	mu sync.RWMutex
+	Err error
+	mu  sync.RWMutex
 }
 
 var throughput uint64

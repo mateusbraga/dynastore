@@ -3,7 +3,7 @@ package server
 import (
 	"testing"
 
-	"github.com/mateusbraga/freestore/pkg/view"
+	"github.com/mateusbraga/dynastore/pkg/view"
 )
 
 func TestGetMostUpdatedView(t *testing.T) {
