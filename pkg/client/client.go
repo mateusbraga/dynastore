@@ -5,9 +5,6 @@ package client
 
 import (
 	"encoding/gob"
-	"log"
-	"math/rand"
-	"time"
 
 	"github.com/mateusbraga/dynastore/pkg/comm"
 	"github.com/mateusbraga/dynastore/pkg/view"
@@ -22,7 +19,7 @@ type Client struct {
 type GetViewFunc func() (*view.View, error)
 
 // New returns a new Client with initialView.
-func New(getInitialViewFunc GetViewFunc, getFurtherViewsFunc GetViewFunc) (*Client, error) {
+func New(getInitialViewFunc GetViewFunc, getFurtherViewsFunc GetViewFunc, associatedProcessPosition int) (*Client, error) {
 	newClient := &Client{}
 	newClient.view = view.NewCurrentView()
 
@@ -33,10 +30,7 @@ func New(getInitialViewFunc GetViewFunc, getFurtherViewsFunc GetViewFunc) (*Clie
 
 	newClient.view.Update(initialView)
 
-	rand.Seed(time.Now().UnixNano())
-	processPosition := rand.Intn(initialView.NumberOfMembers())
-	log.Println(initialView.NumberOfMembers(), processPosition)
-	newClient.lastUsedProcess = initialView.GetMembers()[processPosition]
+	newClient.lastUsedProcess = initialView.GetMembers()[associatedProcessPosition]
 
 	newClient.getFurtherViewsFunc = getFurtherViewsFunc
 

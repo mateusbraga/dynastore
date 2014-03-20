@@ -17,16 +17,21 @@ import (
 )
 
 var (
-	nTotal         = flag.Uint64("n", math.MaxUint64, "number of times to perform a read and write operation")
-	initialProcess = flag.String("initial", "", "Process to ask for the initial view")
-	retryProcess   = flag.String("retry", "", "Process to ask for a newer view")
-	sleepDuration  = flag.Duration("sleep", 0, "How long to wait between pairs of read and write")
+	nTotal                    = flag.Uint64("n", math.MaxUint64, "number of times to perform a read and write operation")
+	initialProcess            = flag.String("initial", "", "Process to ask for the initial view")
+	retryProcess              = flag.String("retry", "", "Process to ask for a newer view")
+	sleepDuration             = flag.Duration("sleep", 0, "How long to wait between pairs of read and write")
+	associatedProcessPosition = flag.Int("process", 1, "Main process to perform client's requests")
 )
 
 func main() {
 	flag.Parse()
 
-	dynastoreClient, err := client.New(getInitialView, getFurtherViews)
+	//rand.Seed(time.Now().UnixNano())
+	//processPosition := rand.Intn(3)
+	//log.Println(processPosition)
+
+	dynastoreClient, err := client.New(getInitialView, getFurtherViews, *associatedProcessPosition)
 	if err != nil {
 		log.Fatalln("FATAL:", err)
 	}

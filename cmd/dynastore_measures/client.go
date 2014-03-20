@@ -19,15 +19,16 @@ import (
 )
 
 var (
-	isWrite            = flag.Bool("write", false, "Client will measure write operations")
-	size               = flag.Int("size", 1, "The size of the data being transfered")
-	numberOfOperations = flag.Int("n", 1000, "Number of operations to perform (latency measurement)")
-	measureLatency     = flag.Bool("latency", false, "Client will measure latency")
-	measureThroughput  = flag.Bool("throughput", false, "Client will measure throughput")
-	totalDuration      = flag.Duration("duration", 10*time.Second, "Duration to run operations (throughput measurement)")
-	resultFile         = flag.String("o", "/proj/freestore/results.txt", "Result file filename")
-	initialProcess     = flag.String("initial", "", "Process to ask for the initial view")
-	retryProcess       = flag.String("retry", "", "Process to ask for a newer view")
+	isWrite                   = flag.Bool("write", false, "Client will measure write operations")
+	size                      = flag.Int("size", 1, "The size of the data being transfered")
+	numberOfOperations        = flag.Int("n", 1000, "Number of operations to perform (latency measurement)")
+	measureLatency            = flag.Bool("latency", false, "Client will measure latency")
+	measureThroughput         = flag.Bool("throughput", false, "Client will measure throughput")
+	totalDuration             = flag.Duration("duration", 10*time.Second, "Duration to run operations (throughput measurement)")
+	resultFile                = flag.String("o", "/proj/freestore/results.txt", "Result file filename")
+	initialProcess            = flag.String("initial", "", "Process to ask for the initial view")
+	retryProcess              = flag.String("retry", "", "Process to ask for a newer view")
+	associatedProcessPosition = flag.Int("process", 1, "Main process to perform client's requests")
 )
 
 var (
@@ -46,7 +47,7 @@ func main() {
 	flag.Parse()
 
 	var err error
-	dynastoreClient, err = client.New(getInitialView, getFurtherViews)
+	dynastoreClient, err = client.New(getInitialView, getFurtherViews, *associatedProcessPosition)
 	if err != nil {
 		log.Fatalln("FATAL:", err)
 	}
