@@ -96,7 +96,7 @@ func latencyAndThroughput() {
 			_, err = dynastoreClient.Read()
 			timeAfter := time.Now()
 			if err != nil {
-				log.Fatalln(err)
+				log.Fatalln("Fatal:", err)
 			}
 
 			latencies = append(latencies, timeAfter.Sub(timeBefore).Nanoseconds())
