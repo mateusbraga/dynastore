@@ -42,7 +42,7 @@ func Run(bindAddr string, initialView *view.View) {
 		} else {
 			// join the view
 			log.Println("asking to join view")
-			Join()
+			go Join()
 		}
 	}
 
