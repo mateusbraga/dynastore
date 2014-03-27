@@ -56,7 +56,7 @@ func getCurrentView(processes ...view.Process) {
 		var receivedView *view.View
 		err := comm.SendRPCRequest(loopProcess, "RegisterService.GetCurrentView", 0, &receivedView)
 		if err != nil {
-			log.Println(err)
+			log.Println("getCurrentView:", err)
 			continue
 		}
 

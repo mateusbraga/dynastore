@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/mateusbraga/dynastore/pkg/client"
@@ -17,11 +15,9 @@ import (
 )
 
 var (
-	nTotal                    = flag.Uint64("n", math.MaxUint64, "number of times to perform a read and write operation")
-	initialProcess            = flag.String("initial", "", "Process to ask for the initial view")
-	retryProcess              = flag.String("retry", "", "Process to ask for a newer view")
-	sleepDuration             = flag.Duration("sleep", 0, "How long to wait between pairs of read and write")
-	associatedProcessPosition = flag.Int("process", 1, "Main process to perform client's requests")
+	nTotal            = flag.Uint64("n", math.MaxUint64, "number of times to perform a read and write operation")
+	sleepDuration     = flag.Duration("sleep", 0, "How long to wait between pairs of read and write")
+	associatedProcess = flag.String("process", ":5000", "Main process to perform client's requests")
 )
 
 func main() {
@@ -31,7 +27,7 @@ func main() {
 	//processPosition := rand.Intn(3)
 	//log.Println(processPosition)
 
-	dynastoreClient, err := client.New(getInitialView, getFurtherViews, *associatedProcessPosition)
+	dynastoreClient, err := client.New(view.Process{*associatedProcess})
 	if err != nil {
 		log.Fatalln("FATAL:", err)
 	}
@@ -60,44 +56,4 @@ func main() {
 
 		time.Sleep(*sleepDuration)
 	}
-}
-
-func getInitialView() (*view.View, error) {
-	hostname, err := os.Hostname()
-	if err != nil {
-		log.Panicln(err)
-	}
-
-	if *initialProcess == "" {
-		switch {
-		case strings.Contains(hostname, "node-"): // emulab.net
-			updates := []view.Update{view.Update{Type: view.Join, Process: view.Process{"10.1.1.2:5000"}},
-				view.Update{Type: view.Join, Process: view.Process{"10.1.1.3:5000"}},
-				view.Update{Type: view.Join, Process: view.Process{"10.1.1.4:5000"}},
-			}
-			return view.NewWithUpdates(updates...), nil
-		default:
-			updates := []view.Update{view.Update{Type: view.Join, Process: view.Process{"[::]:5000"}},
-				view.Update{Type: view.Join, Process: view.Process{"[::]:5001"}},
-				view.Update{Type: view.Join, Process: view.Process{"[::]:5002"}},
-			}
-			return view.NewWithUpdates(updates...), nil
-		}
-	} else {
-		process := view.Process{*initialProcess}
-		initialView, err := client.GetCurrentView(process)
-		if err != nil {
-			log.Fatalf("Failed to get current view from process %v: %v\n", process, err)
-		}
-		return initialView, nil
-	}
-}
-
-func getFurtherViews() (*view.View, error) {
-	view, err := client.GetCurrentView(view.Process{*retryProcess})
-	if err != nil {
-		return nil, err
-	}
-
-	return view, nil
 }

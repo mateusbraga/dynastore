@@ -10,7 +10,6 @@ import (
 	"log"
 	"os"
 	"runtime"
-	"strings"
 	"time"
 
 	"github.com/mateusbraga/dynastore/pkg/client"
@@ -19,16 +18,14 @@ import (
 )
 
 var (
-	isWrite                   = flag.Bool("write", false, "Client will measure write operations")
-	size                      = flag.Int("size", 1, "The size of the data being transfered")
-	numberOfOperations        = flag.Int("n", 1000, "Number of operations to perform (latency measurement)")
-	measureLatency            = flag.Bool("latency", false, "Client will measure latency")
-	measureThroughput         = flag.Bool("throughput", false, "Client will measure throughput")
-	totalDuration             = flag.Duration("duration", 10*time.Second, "Duration to run operations (throughput measurement)")
-	resultFile                = flag.String("o", "/proj/freestore/results.txt", "Result file filename")
-	initialProcess            = flag.String("initial", "", "Process to ask for the initial view")
-	retryProcess              = flag.String("retry", "", "Process to ask for a newer view")
-	associatedProcessPosition = flag.Int("process", 1, "Main process to perform client's requests")
+	isWrite            = flag.Bool("write", false, "Client will measure write operations")
+	size               = flag.Int("size", 1, "The size of the data being transfered")
+	numberOfOperations = flag.Int("n", 1000, "Number of operations to perform (latency measurement)")
+	measureLatency     = flag.Bool("latency", false, "Client will measure latency")
+	measureThroughput  = flag.Bool("throughput", false, "Client will measure throughput")
+	totalDuration      = flag.Duration("duration", 10*time.Second, "Duration to run operations (throughput measurement)")
+	resultFile         = flag.String("o", "/proj/freestore/results.txt", "Result file filename")
+	associatedProcess  = flag.String("process", ":5000", "Main process to perform client's requests")
 )
 
 var (
@@ -47,7 +44,7 @@ func main() {
 	flag.Parse()
 
 	var err error
-	dynastoreClient, err = client.New(getInitialView, getFurtherViews, *associatedProcessPosition)
+	dynastoreClient, err = client.New(view.Process{*associatedProcess})
 	if err != nil {
 		log.Fatalln("FATAL:", err)
 	}
@@ -249,44 +246,4 @@ func createFakeData() []byte {
 		log.Fatalln("error to generate data:", err)
 	}
 	return data
-}
-
-func getInitialView() (*view.View, error) {
-	hostname, err := os.Hostname()
-	if err != nil {
-		log.Panicln(err)
-	}
-
-	if *initialProcess == "" {
-		switch {
-		case strings.Contains(hostname, "node-"): // emulab.net
-			updates := []view.Update{view.Update{Type: view.Join, Process: view.Process{"10.1.1.2:5000"}},
-				view.Update{Type: view.Join, Process: view.Process{"10.1.1.3:5000"}},
-				view.Update{Type: view.Join, Process: view.Process{"10.1.1.4:5000"}},
-			}
-			return view.NewWithUpdates(updates...), nil
-		default:
-			updates := []view.Update{view.Update{Type: view.Join, Process: view.Process{"[::]:5000"}},
-				view.Update{Type: view.Join, Process: view.Process{"[::]:5001"}},
-				view.Update{Type: view.Join, Process: view.Process{"[::]:5002"}},
-			}
-			return view.NewWithUpdates(updates...), nil
-		}
-	} else {
-		process := view.Process{*initialProcess}
-		initialView, err := client.GetCurrentView(process)
-		if err != nil {
-			log.Fatalf("Failed to get current view from process %v: %v\n", process, err)
-		}
-		return initialView, nil
-	}
-}
-
-func getFurtherViews() (*view.View, error) {
-	view, err := client.GetCurrentView(view.Process{*retryProcess})
-	if err != nil {
-		return nil, err
-	}
-
-	return view, nil
 }

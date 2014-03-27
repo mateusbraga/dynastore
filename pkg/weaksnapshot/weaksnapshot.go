@@ -70,7 +70,7 @@ func (ws *weakSnapshot) readQuorum(registerIndex int, finalQuorumResultChan chan
 
 		// count success or failure
 		if receivedValue.Err != nil {
-			log.Println("+1 error to read:", receivedValue.Err)
+			//log.Println("+1 error to read:", receivedValue.Err)
 			failedTotal++
 			if failedTotal > ws.associatedView.NumberOfToleratedFaults() {
 				log.Fatalln("weaksnapshot: Failed to get read quorum")

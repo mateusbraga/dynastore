@@ -98,7 +98,7 @@ func BroadcastRPCRequest(destinationView *view.View, serviceMethod string, arg i
 		err := <-errorChan
 
 		if err != nil {
-			log.Println(err)
+			//log.Println(err)
 			failedTotal++
 			if failedTotal > destinationView.NumberOfToleratedFaults() {
 				log.Printf("WARN: BroadcastRPCRequest failed to send %v to a quorum\n", serviceMethod)
