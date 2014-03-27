@@ -47,13 +47,28 @@ func (thisClient *Client) updateCurrentView(newView *view.View) { thisClient.vie
 // Write v to the system's register. Can be run concurrently.
 func (thisClient *Client) Write(v interface{}) error {
 	discardResult := struct{}{}
-	return comm.SendRPCRequest(thisClient.lastUsedProcess, "RegisterService.Write", RegisterMsg{Value: v}, &discardResult)
+	err := comm.SendRPCRequest(thisClient.lastUsedProcess, "RegisterService.Write", RegisterMsg{Value: v}, &discardResult)
+	if err != nil {
+		if thisClient.couldGetNewView() {
+			return thisClient.Write(v)
+		} else {
+			return err
+		}
+	}
+	return nil
 }
 
 // Read executes the quorum read protocol.
 func (thisClient *Client) Read() (interface{}, error) {
 	registerMsg := RegisterMsg{}
 	err := comm.SendRPCRequest(thisClient.lastUsedProcess, "RegisterService.Read", struct{}{}, &registerMsg)
+	if err != nil {
+		if thisClient.couldGetNewView() {
+			return thisClient.Read()
+		} else {
+			return registerMsg.Value, err
+		}
+	}
 	return registerMsg.Value, err
 }
 
@@ -62,3 +77,17 @@ type RegisterMsg struct {
 }
 
 func init() { gob.Register(new(RegisterMsg)) }
+
+func (thisClient *Client) couldGetNewView() bool {
+	view, err := thisClient.getFurtherViewsFunc()
+	if err != nil {
+		return false
+	}
+
+	if view.LessUpdatedThan(thisClient.View()) {
+		return false
+	}
+
+	thisClient.updateCurrentView(view)
+	return true
+}

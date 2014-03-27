@@ -172,7 +172,7 @@ func contactQ(msgType string, destinationView *view.View, thisOpValue *Value) {
 		for {
 			result := <-resultChan
 			if result.Err != nil {
-				log.Println("+1 error on read:", result.Err)
+				//log.Println("+1 error on read:", result.Err)
 				failedTotal++
 				continue
 			}
