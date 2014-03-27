@@ -84,7 +84,7 @@ func (thisClient *Client) couldGetNewView() bool {
 		return false
 	}
 
-	if view.LessUpdatedThan(thisClient.View()) {
+	if view.LessUpdatedThan(thisClient.View()) || view.Equal(thisClient.View()) {
 		return false
 	}
 
